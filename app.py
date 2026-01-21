@@ -156,10 +156,20 @@ def webhook() -> Tuple[Response, int]:
     request_id = g.request_id
     remote_addr = get_remote_addr()
     
+    # 1. IP Filtering
     if remote_addr and not is_ip_trusted(remote_addr):
         logger.warning(f"Access denied for IP: {remote_addr}")
         WEBHOOK_COUNT.labels(status='forbidden').inc()
         return jsonify({"status": "error", "message": "Forbidden", "request_id": request_id}), 403
+
+    # 2. Secret Token Authentication (Optional)
+    webhook_secret = os.environ.get('WEBHOOK_SECRET')
+    if webhook_secret:
+        provided_secret = request.headers.get('X-KumaWise-Secret')
+        if provided_secret != webhook_secret:
+            logger.warning(f"Unauthorized access attempt with invalid secret from {remote_addr}")
+            WEBHOOK_COUNT.labels(status='unauthorized').inc()
+            return jsonify({"status": "error", "message": "Unauthorized", "request_id": request_id}), 401
 
     data = request.json
     if not data:
