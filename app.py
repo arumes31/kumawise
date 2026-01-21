@@ -10,8 +10,18 @@ from connectwise import ConnectWiseClient
 from celery import Celery
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import redis
+from werkzeug.middleware.proxy_fix import ProxyFix
+from dotenv import load_dotenv
+
+# Load .env file if it exists
+load_dotenv()
 
 app = Flask(__name__)
+
+# Configure ProxyFix if behind a reverse proxy
+if os.environ.get('USE_PROXY') == 'true':
+    num_proxies = int(os.environ.get('PROXY_FIX_COUNT', 1))
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=num_proxies, x_proto=num_proxies, x_host=num_proxies, x_port=num_proxies)
 
 # Celery Configuration
 celery_broker = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
@@ -44,14 +54,22 @@ def set_request_id():
     req_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
     g.request_id = req_id
 
+def get_remote_addr() -> str:
+    """
+    Returns the effective remote address.
+    Supports Cloudflare header CF-Connecting-IP if USE_CLOUDFLARE is true.
+    """
+    if os.environ.get('USE_CLOUDFLARE') == 'true':
+        cf_ip = request.headers.get('CF-Connecting-IP')
+        if cf_ip:
+            return cf_ip
+    return request.remote_addr
+
 def handle_alert_logic(data: Dict[str, Any], request_id: str):
     """
     Core logic for processing an alert. Accepts request_id for logging traceability.
     """
-    # Set request_id in thread local for logging if called outside Flask context
-    # (In Celery worker, we manually prefix or use a filter)
     extra = {'request_id': request_id}
-    
     start_time = time.time()
     heartbeat = data.get('heartbeat', {})
     monitor = data.get('monitor', {})
@@ -60,51 +78,49 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
     msg = data.get('msg', 'No message')
     
     alert_type = "DOWN" if status == 0 else "UP"
-    
-    # Unique identifier for the ticket summary
     ticket_summary_prefix = "Uptime Kuma Alert:"
     ticket_summary = f"{ticket_summary_prefix} {monitor_name}"
 
-    if status == 0: # DOWN
-        logger.info(f"Processing DOWN alert for {monitor_name}", extra=extra)
-        existing_ticket = cw_client.find_open_ticket(ticket_summary)
-        if existing_ticket:
-            logger.info(f"Ticket already exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping.", extra=extra)
-            PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
-            return
-        
-        company_id_match = re.search(r'#CW(\w+)', monitor_name)
-        company_id = company_id_match.group(1) if company_id_match else None
-        description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
-        cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
-        PSA_TASK_COUNT.labels(type='create', result='success').inc()
-
-    elif status == 1: # UP
-        logger.info(f"Processing UP alert for {monitor_name}", extra=extra)
-        existing_ticket = cw_client.find_open_ticket(ticket_summary)
-        if existing_ticket:
-            resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
-            cw_client.close_ticket(existing_ticket['id'], resolution)
-            PSA_TASK_COUNT.labels(type='close', result='success').inc()
-        else:
-            logger.info(f"No open ticket found for {monitor_name} to close.", extra=extra)
-            PSA_TASK_COUNT.labels(type='close', result='skipped').inc()
-
-    PSA_TASK_DURATION.labels(type=alert_type).observe(time.time() - start_time)
-
-@celery.task(bind=True, max_retries=5, default_retry_delay=60)
-def process_alert_task(self, data: Dict[str, Any], request_id: str):
-    """
-    Celery task wrapper.
-    """
     try:
-        handle_alert_logic(data, request_id)
+        if status == 0: # DOWN
+            logger.info(f"Processing DOWN alert for {monitor_name}", extra=extra)
+            existing_ticket = cw_client.find_open_ticket(ticket_summary)
+            if existing_ticket:
+                logger.info(f"Ticket already exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping.", extra=extra)
+                PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
+                return
+            
+            company_id_match = re.search(r'#CW(\w+)', monitor_name)
+            company_id = company_id_match.group(1) if company_id_match else None
+            description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
+            cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
+            PSA_TASK_COUNT.labels(type='create', result='success').inc()
+
+        elif status == 1: # UP
+            logger.info(f"Processing UP alert for {monitor_name}", extra=extra)
+            existing_ticket = cw_client.find_open_ticket(ticket_summary)
+            if existing_ticket:
+                resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
+                cw_client.close_ticket(existing_ticket['id'], resolution)
+                PSA_TASK_COUNT.labels(type='close', result='success').inc()
+            else:
+                logger.info(f"No open ticket found for {monitor_name} to close.", extra=extra)
+                PSA_TASK_COUNT.labels(type='close', result='skipped').inc()
+
+        PSA_TASK_DURATION.labels(type=alert_type).observe(time.time() - start_time)
+
     except Exception as exc:
-        alert_type = "DOWN" if data.get('heartbeat', {}).get('status') == 0 else "UP"
-        logger.error(f"Error processing {alert_type} alert: {exc}", extra={'request_id': request_id})
+        logger.error(f"Error processing {alert_type} alert: {exc}", extra=extra)
         PSA_TASK_COUNT.labels(type=alert_type.lower(), result='error').inc()
         retry_delay = 2 ** self.request.retries * 60
         raise self.retry(exc=exc, countdown=retry_delay)
+
+@celery.task(bind=True, max_retries=5, default_retry_delay=60)
+def process_alert_task(self, data: Dict[str, Any], request_id: str):
+    try:
+        handle_alert_logic(data, request_id)
+    except Exception as exc:
+        raise self.retry(exc=exc)
 
 def is_ip_trusted(remote_addr: str) -> bool:
     trusted_env = os.environ.get('TRUSTED_IPS')
@@ -124,9 +140,10 @@ def is_ip_trusted(remote_addr: str) -> bool:
 @app.route('/webhook', methods=['POST'])
 def webhook() -> Tuple[Response, int]:
     request_id = g.request_id
+    remote_addr = get_remote_addr()
     
-    if request.remote_addr and not is_ip_trusted(request.remote_addr):
-        logger.warning(f"Access denied for IP: {request.remote_addr}")
+    if remote_addr and not is_ip_trusted(remote_addr):
+        logger.warning(f"Access denied for IP: {remote_addr}")
         WEBHOOK_COUNT.labels(status='forbidden').inc()
         return jsonify({"status": "error", "message": "Forbidden", "request_id": request_id}), 403
 
@@ -145,60 +162,40 @@ def webhook() -> Tuple[Response, int]:
 
 @app.route('/health', methods=['GET'])
 def health() -> Tuple[Response, int]:
-    """Basic health check with Redis ping."""
     try:
         redis_client.ping()
         return jsonify({"status": "ok", "timestamp": time.time()}), 200
-    except Exception as e:
-        logger.error(f"Health check failed: Redis unreachable: {e}")
+    except Exception:
         return jsonify({"status": "error", "message": "Redis unreachable"}), 503
 
 @app.route('/health/detailed', methods=['GET'])
 def health_detailed() -> Tuple[Response, int]:
-    """Deep health check including Redis and Celery status."""
     health_status = "ok"
     redis_ok = False
     celery_workers = []
-
     try:
         redis_ok = redis_client.ping()
     except Exception:
         health_status = "error"
-
     try:
         inspector = celery.control.inspect()
         active = inspector.active()
         if active:
             celery_workers = list(active.keys())
         else:
-            health_status = "error" # No active workers
+            health_status = "error"
     except Exception:
         health_status = "error"
 
-    cw_configured = all([
-        cw_client.base_url,
-        cw_client.company,
-        cw_client.public_key,
-        cw_client.private_key,
-        cw_client.client_id
-    ])
+    cw_configured = all([cw_client.base_url, cw_client.company, cw_client.public_key, cw_client.private_key, cw_client.client_id])
     
     return jsonify({
         "status": health_status,
         "timestamp": time.time(),
         "services": {
             "redis": {"status": "ok" if redis_ok else "error"},
-            "celery": {
-                "status": "ok" if celery_workers else "error",
-                "active_workers": celery_workers
-            },
-            "connectwise": {
-                "configured": cw_configured,
-                "base_url": cw_client.base_url
-            }
-        },
-        "environment": {
-            "trusted_ips_enabled": bool(os.environ.get('TRUSTED_IPS'))
+            "celery": {"status": "ok" if celery_workers else "error", "active_workers": celery_workers},
+            "connectwise": {"configured": cw_configured}
         }
     }), 200 if health_status == "ok" else 503
 

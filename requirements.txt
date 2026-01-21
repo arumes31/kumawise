@@ -5,3 +5,4 @@ pytest
 celery
 redis
 prometheus_client
+python-dotenv
