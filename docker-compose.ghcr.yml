@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
-    environment:
+    environment: &env
       - CW_URL=https://api-na.myconnectwise.net/v4_6_release/apis/3.0
       - CW_COMPANY=your_company_id
       - CW_PUBLIC_KEY=your_public_key
@@ -17,4 +17,25 @@ services:
       - CW_STATUS_NEW=New
       - CW_STATUS_CLOSED=Closed
       - CW_DEFAULT_COMPANY_ID=ConnectWise_Company_ID_For_Tickets
-      # - TRUSTED_IPS=192.168.1.5, 10.0.0.0/24 # Optional: Restrict access to specific IPs/CIDRs. Leave empty or set 0.0.0.0/0 to allow all.
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+
+  kumawise-worker:
+    image: ghcr.io/arumes31/kumawise:latest
+    container_name: kumawise-worker
+    restart: unless-stopped
+    command: celery -A app.celery worker --loglevel=info
+    environment: *env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:alpine
+    container_name: kumawise-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+
+volumes:
+  redis_data:
