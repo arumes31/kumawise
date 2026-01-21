@@ -19,7 +19,7 @@ services:
       - CW_DEFAULT_COMPANY_ID=ConnectWise_Company_ID_For_Tickets
       - CELERY_BROKER_URL=redis://redis:6379/0
       # - CW_TICKET_PREFIX=Uptime Kuma Alert:
-      # - WEBHOOK_SECRET=your_random_secret_string
+      # - WEBHOOK_SECRET=token1,token2
       # - TRUSTED_IPS=192.168.1.5, 10.0.0.0/24 
       # - USE_PROXY=true
       # - PROXY_FIX_COUNT=1

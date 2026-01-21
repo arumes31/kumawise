@@ -46,7 +46,7 @@ The application is configured via environment variables.
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
 | `CW_DEFAULT_COMPANY_ID` | Fallback CW Company ID | No | - |
 | `CW_TICKET_PREFIX` | Prefix for ticket summary | No | `Uptime Kuma Alert:` |
-| `WEBHOOK_SECRET` | Optional shared secret for authentication. If set, requests must include the `X-KumaWise-Secret` header. | No | - |
+| `WEBHOOK_SECRET` | Optional shared secret(s) for authentication. Multiple keys can be provided as a comma-separated list. If set, requests must include a valid `X-KumaWise-Secret` header. | No | - |
 | `CELERY_BROKER_URL` | Redis connection string | No | `redis://redis:6379/0` |
 | `TRUSTED_IPS` | Whitelist IPs/CIDRs (comma-sep) | No | `0.0.0.0/0` (All) |
 | `USE_PROXY` | Enable Reverse Proxy support (X-Forwarded-For) | No | `false` |
@@ -91,14 +91,14 @@ docker-compose up -d
 
 ### Webhook Secret (Recommended)
 
-To prevent unauthorized entities from creating tickets, configure a `WEBHOOK_SECRET`.
+To prevent unauthorized entities from creating tickets, configure one or more `WEBHOOK_SECRET` tokens.
 
-1.  **Proxy Side:** Set the environment variable `WEBHOOK_SECRET=my_secure_token_123`.
+1.  **Proxy Side:** Set the environment variable `WEBHOOK_SECRET=token1,token2`.
 2.  **Uptime Kuma Side:**
     *   Go to your Webhook Notification settings.
     *   Add a **Custom Header**:
         *   Name: `X-KumaWise-Secret`
-        *   Value: `my_secure_token_123`
+        *   Value: `token1` (or `token2`)
 
 ## Uptime Kuma Setup
 

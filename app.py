@@ -163,10 +163,12 @@ def webhook() -> Tuple[Response, int]:
         return jsonify({"status": "error", "message": "Forbidden", "request_id": request_id}), 403
 
     # 2. Secret Token Authentication (Optional)
-    webhook_secret = os.environ.get('WEBHOOK_SECRET')
-    if webhook_secret:
+    webhook_secrets_env = os.environ.get('WEBHOOK_SECRET')
+    if webhook_secrets_env:
         provided_secret = request.headers.get('X-KumaWise-Secret')
-        if provided_secret != webhook_secret:
+        trusted_secrets = [s.strip() for s in webhook_secrets_env.split(',') if s.strip()]
+        
+        if provided_secret not in trusted_secrets:
             logger.warning(f"Unauthorized access attempt with invalid secret from {remote_addr}")
             WEBHOOK_COUNT.labels(status='unauthorized').inc()
             return jsonify({"status": "error", "message": "Unauthorized", "request_id": request_id}), 401
