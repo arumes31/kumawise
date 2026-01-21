@@ -24,7 +24,7 @@ The application is configured via environment variables.
 | `CW_COMPANY` | Your ConnectWise Company ID | Yes | - |
 | `CW_PUBLIC_KEY` | API Public Key | Yes | - |
 | `CW_PRIVATE_KEY` | API Private Key | Yes | - |
-| `CW_CLIENT_ID` | Client ID (Optional) | No | - |
+| `CW_CLIENT_ID` | Client ID | Yes | - |
 | `CW_SERVICE_BOARD` | Service Board Name | No | `Service Board` |
 | `CW_STATUS_NEW` | Status for new tickets | No | `New` |
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
@@ -34,7 +34,32 @@ The application is configured via environment variables.
 
 ## Deployment
 
-### Docker Compose (Recommended)
+### Docker (GHCR Image)
+
+You can pull the pre-built image directly from GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/arumes31/kumawise:latest
+docker run -d -p 5000:5000 --env-file .env ghcr.io/arumes31/kumawise:latest
+```
+
+### Docker Compose (GHCR Image)
+
+Use the `docker-compose.ghcr.yml` file to run the latest pre-built image.
+
+```bash
+# Download the example file
+curl -O https://raw.githubusercontent.com/arumes31/kumawise/main/docker-compose.ghcr.yml
+
+# Rename and Configure
+mv docker-compose.ghcr.yml docker-compose.yml
+# Edit docker-compose.yml with your credentials
+
+# Run
+docker-compose up -d
+```
+
+### Docker Compose (Build Locally)
 
 1. **Configure:** Update `docker-compose.yml` with your ConnectWise credentials.
 2. **Run:**

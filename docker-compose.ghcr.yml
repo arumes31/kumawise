@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   kumawise-proxy:
-    build: .
+    image: ghcr.io/arumes31/kumawise:latest
     container_name: kumawise-proxy
     restart: unless-stopped
     ports:
@@ -18,4 +18,3 @@ services:
       - CW_STATUS_CLOSED=Closed
       - CW_DEFAULT_COMPANY_ID=ConnectWise_Company_ID_For_Tickets
       # - TRUSTED_IPS=192.168.1.5, 10.0.0.0/24 # Optional: Restrict access to specific IPs/CIDRs. Leave empty or set 0.0.0.0/0 to allow all.
-
