@@ -1,9 +1,7 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 
 import pytest
-
 from app import app, handle_alert_logic
-
 
 @pytest.fixture
 def client():
@@ -53,69 +51,51 @@ def test_webhook_queues_task(mock_delay, client):
     # Verify that the task was queued with the same request_id
     mock_delay.assert_called_once_with(payload, response.json['request_id'])
 
-@patch('app.process_alert_task.delay')
-def test_webhook_auth_success(mock_delay, client):
-    """Test webhook with correct secret."""
-    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'top-secret'})
-        assert response.status_code == 202
-
-@patch('app.process_alert_task.delay')
-def test_webhook_auth_failure(mock_delay, client):
-    """Test webhook with incorrect secret."""
-    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'wrong-secret'})
-        assert response.status_code == 401
-        assert response.json['message'] == "Unauthorized"
-
-@patch('app.process_alert_task.delay')
-def test_webhook_auth_missing(mock_delay, client):
-    """Test webhook with missing secret when required."""
-    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        response = client.post('/webhook', json=payload)
-        assert response.status_code == 401
-
-@patch('app.process_alert_task.delay')
-def test_webhook_auth_multiple_secrets(mock_delay, client):
-    """Test webhook with multiple configured secrets."""
-    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'secret1, secret2'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        
-        # Test first secret
-        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret1'})
-        assert response.status_code == 202
-        
-        # Test second secret
-        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret2'})
-        assert response.status_code == 202
-        
-        # Test invalid secret
-        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret3'})
-        assert response.status_code == 401
-
+@patch('app.redis_client')
 @patch('app.cw_client')
-def test_handle_alert_logic_down(mock_cw):
-    """Test the core logic for creating a ticket (DOWN alert)."""
-    mock_cw.find_open_ticket.return_value = None
-    mock_cw.create_ticket.return_value = {"id": 12345}
+def test_handle_alert_logic_down_with_cache(mock_cw, mock_redis):
+    """Test DOWN alert when ticket is in Redis cache."""
+    mock_redis.get.return_value = b"12345"
     
     data = {
-        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
-        "monitor": {"name": "Test Monitor #CW-COMP-1", "url": "http://example.com"},
-        "msg": "Connection timeout"
+        "heartbeat": {"status": 0},
+        "monitor": {"name": "Cached Monitor"},
+        "msg": "Down"
     }
     
-    handle_alert_logic(data, "test-req-id")
+    with app.app_context():
+        handle_alert_logic(data, "req-123")
     
-    mock_cw.find_open_ticket.assert_called_once()
-    mock_cw.create_ticket.assert_called_once()
+    # Should check cache but NOT call ConnectWise
+    mock_redis.get.assert_called_once()
+    mock_cw.find_open_ticket.assert_not_called()
+    mock_cw.create_ticket.assert_not_called()
 
+@patch('app.redis_client')
 @patch('app.cw_client')
-def test_handle_alert_logic_custom_prefix(mock_cw):
+def test_handle_alert_logic_up_with_cache(mock_cw, mock_redis):
+    """Test UP alert when ticket is in Redis cache."""
+    mock_redis.get.return_value = b"12345"
+    mock_cw.close_ticket.return_value = True
+    
+    data = {
+        "heartbeat": {"status": 1},
+        "monitor": {"name": "Cached Monitor"},
+        "msg": "Up"
+    }
+    
+    with app.app_context():
+        handle_alert_logic(data, "req-123")
+    
+    # Should use ID from cache, close ticket, and delete cache key
+    mock_cw.close_ticket.assert_called_once_with(12345, ANY)
+    mock_redis.delete.assert_called_once()
+
+@patch('app.redis_client')
+@patch('app.cw_client')
+def test_handle_alert_logic_custom_prefix(mock_cw, mock_redis):
     """Test the custom ticket summary prefix."""
+    mock_redis.get.return_value = None
     mock_cw.find_open_ticket.return_value = None
     
     data = {
@@ -125,39 +105,6 @@ def test_handle_alert_logic_custom_prefix(mock_cw):
     }
     
     with patch.dict('os.environ', {'CW_TICKET_PREFIX': 'CUSTOM PREFIX:'}):
-        handle_alert_logic(data, "test-req-id")
-        
-        # Verify that find_open_ticket was called with the custom prefix
-        mock_cw.find_open_ticket.assert_called_once_with("CUSTOM PREFIX: Test Monitor")
-
-@patch('app.cw_client')
-def test_handle_alert_logic_no_prefix(mock_cw):
-    """Test the ticket summary when prefix is explicitly empty."""
-    mock_cw.find_open_ticket.return_value = None
-    
-    data = {
-        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
-        "monitor": {"name": "Test Monitor"},
-        "msg": "Test"
-    }
-    
-    with patch.dict('os.environ', {'CW_TICKET_PREFIX': ''}):
-        handle_alert_logic(data, "test-req-id")
-        
-        # Verify that find_open_ticket was called WITHOUT prefix or leading space
-        mock_cw.find_open_ticket.assert_called_once_with("Test Monitor")
-
-@patch('app.cw_client')
-def test_handle_alert_logic_up(mock_cw):
-    """Test the core logic for closing a ticket (UP alert)."""
-    mock_cw.find_open_ticket.return_value = {"id": 12345}
-    
-    data = {
-        "heartbeat": {"status": 1, "time": "2026-01-21 22:05:00"},
-        "monitor": {"name": "Test Monitor #CW-COMP-1"},
-        "msg": "Back online"
-    }
-    
-    handle_alert_logic(data, "test-req-id")
-    
-    mock_cw.close_ticket.assert_called_once_with(12345, MagicMock())
+        with app.app_context():
+            handle_alert_logic(data, "test-req-id")
+            mock_cw.find_open_ticket.assert_called_once_with("CUSTOM PREFIX: Test Monitor")

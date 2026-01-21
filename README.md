@@ -41,6 +41,7 @@ The application is configured via environment variables.
 | `CW_PUBLIC_KEY` | API Public Key | **Yes** | - |
 | `CW_PRIVATE_KEY` | API Private Key | **Yes** | - |
 | `CW_CLIENT_ID` | API Client ID | **Yes** | - |
+| `REDIS_PASSWORD` | Optional password for Redis security | No | - |
 | `CW_SERVICE_BOARD` | Service Board Name | No | `Service Board` |
 | `CW_STATUS_NEW` | Status for new tickets | No | `New` |
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
