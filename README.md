@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo.svg" alt="KumaWise Logo" width="400">
+</p>
+
 # KumaWise Proxy
 
 A lightweight middleware webhook receiver that bridges **Uptime Kuma** alerts to **ConnectWise Manage** tickets.
