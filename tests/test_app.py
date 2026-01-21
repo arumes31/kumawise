@@ -83,3 +83,20 @@ def test_handle_alert_logic_custom_prefix(mock_cw):
         
         # Verify that find_open_ticket was called with the custom prefix
         mock_cw.find_open_ticket.assert_called_once_with("CUSTOM PREFIX: Test Monitor")
+
+@patch('app.cw_client')
+def test_handle_alert_logic_no_prefix(mock_cw):
+    """Test the ticket summary when prefix is explicitly empty."""
+    mock_cw.find_open_ticket.return_value = None
+    
+    data = {
+        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
+        "monitor": {"name": "Test Monitor"},
+        "msg": "Test"
+    }
+    
+    with patch.dict('os.environ', {'CW_TICKET_PREFIX': ''}):
+        handle_alert_logic(data, "test-req-id")
+        
+        # Verify that find_open_ticket was called WITHOUT prefix or leading space
+        mock_cw.find_open_ticket.assert_called_once_with("Test Monitor")
