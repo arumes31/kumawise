@@ -66,3 +66,20 @@ def test_handle_alert_logic_down(mock_cw):
     
     mock_cw.find_open_ticket.assert_called_once()
     mock_cw.create_ticket.assert_called_once()
+
+@patch('app.cw_client')
+def test_handle_alert_logic_custom_prefix(mock_cw):
+    """Test the custom ticket summary prefix."""
+    mock_cw.find_open_ticket.return_value = None
+    
+    data = {
+        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
+        "monitor": {"name": "Test Monitor"},
+        "msg": "Test"
+    }
+    
+    with patch.dict('os.environ', {'CW_TICKET_PREFIX': 'CUSTOM PREFIX:'}):
+        handle_alert_logic(data, "test-req-id")
+        
+        # Verify that find_open_ticket was called with the custom prefix
+        mock_cw.find_open_ticket.assert_called_once_with("CUSTOM PREFIX: Test Monitor")

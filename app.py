@@ -78,7 +78,7 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
     msg = data.get('msg', 'No message')
     
     alert_type = "DOWN" if status == 0 else "UP"
-    ticket_summary_prefix = "Uptime Kuma Alert:"
+    ticket_summary_prefix = os.environ.get('CW_TICKET_PREFIX', 'Uptime Kuma Alert:')
     ticket_summary = f"{ticket_summary_prefix} {monitor_name}"
 
     try:
