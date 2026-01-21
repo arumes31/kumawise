@@ -50,6 +50,31 @@ def test_webhook_queues_task(mock_delay, client):
     # Verify that the task was queued with the same request_id
     mock_delay.assert_called_once_with(payload, response.json['request_id'])
 
+@patch('app.process_alert_task.delay')
+def test_webhook_auth_success(mock_delay, client):
+    """Test webhook with correct secret."""
+    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'top-secret'})
+        assert response.status_code == 202
+
+@patch('app.process_alert_task.delay')
+def test_webhook_auth_failure(mock_delay, client):
+    """Test webhook with incorrect secret."""
+    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'wrong-secret'})
+        assert response.status_code == 401
+        assert response.json['message'] == "Unauthorized"
+
+@patch('app.process_alert_task.delay')
+def test_webhook_auth_missing(mock_delay, client):
+    """Test webhook with missing secret when required."""
+    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'top-secret'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        response = client.post('/webhook', json=payload)
+        assert response.status_code == 401
+
 @patch('app.cw_client')
 def test_handle_alert_logic_down(mock_cw):
     """Test the core logic for creating a ticket (DOWN alert)."""

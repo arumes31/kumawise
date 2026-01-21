@@ -46,6 +46,7 @@ The application is configured via environment variables.
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
 | `CW_DEFAULT_COMPANY_ID` | Fallback CW Company ID | No | - |
 | `CW_TICKET_PREFIX` | Prefix for ticket summary | No | `Uptime Kuma Alert:` |
+| `WEBHOOK_SECRET` | Shared secret for authentication | No | - |
 | `CELERY_BROKER_URL` | Redis connection string | No | `redis://redis:6379/0` |
 | `TRUSTED_IPS` | Whitelist IPs/CIDRs (comma-sep) | No | `0.0.0.0/0` (All) |
 | `USE_PROXY` | Enable Reverse Proxy support (X-Forwarded-For) | No | `false` |
