@@ -29,6 +29,7 @@ The application is configured via environment variables.
 | `CW_STATUS_NEW` | Status for new tickets | No | `New` |
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
 | `CW_DEFAULT_COMPANY_ID` | Fallback CW Company ID | No | - |
+| `TRUSTED_IPS` | Whitelist IPs/CIDRs (comma-sep) | No | `0.0.0.0/0` (All) |
 | `PORT` | Webhook Port | No | `5000` |
 
 ## Deployment

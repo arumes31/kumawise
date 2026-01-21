@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, Response
 import logging
 import os
 import re
+import ipaddress
 from typing import Tuple, Dict, Any, Optional
 from connectwise import ConnectWiseClient
 
@@ -13,12 +14,51 @@ logger = logging.getLogger(__name__)
 
 cw_client = ConnectWiseClient()
 
+def is_ip_trusted(remote_addr: str) -> bool:
+    """
+    Checks if the remote IP is in the trusted list.
+    If TRUSTED_IPS is not set, allow all.
+    If TRUSTED_IPS contains 0.0.0.0/0, allow all.
+    """
+    trusted_env = os.environ.get('TRUSTED_IPS')
+    
+    # If not configured, default to allow all (backward compatibility)
+    if not trusted_env:
+        return True
+        
+    # Quick check for allow all wildcard
+    if "0.0.0.0/0" in trusted_env:
+        return True
+
+    try:
+        client_ip = ipaddress.ip_address(remote_addr)
+        for rule in trusted_env.split(','):
+            rule = rule.strip()
+            if not rule:
+                continue
+            
+            # ip_network handles both single IPs (as /32) and CIDRs
+            network = ipaddress.ip_network(rule, strict=False)
+            if client_ip in network:
+                return True
+                
+    except ValueError as e:
+        logger.error(f"IP validation error for {remote_addr} against {trusted_env}: {e}")
+        return False
+
+    return False
+
 @app.route('/webhook', methods=['POST'])
 def webhook() -> Tuple[Response, int]:
     """
     Webhook endpoint to receive alerts from Uptime Kuma.
     Expects a JSON payload with 'heartbeat', 'monitor', and 'msg'.
     """
+    # IP Filtering
+    if request.remote_addr and not is_ip_trusted(request.remote_addr):
+        logger.warning(f"Access denied for IP: {request.remote_addr}")
+        return jsonify({"status": "error", "message": "Forbidden"}), 403
+
     data: Optional[Dict[str, Any]] = request.json
     
     if not data:

@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, ANY
 from app import app
 
 @pytest.fixture
@@ -14,6 +14,54 @@ def test_health(mock_cw, client):
     response = client.get('/health')
     assert response.status_code == 200
     assert response.json == {"status": "ok"}
+
+@patch('app.cw_client')
+def test_webhook_ip_allowed_default(mock_cw, client):
+    """Test that requests are allowed when TRUSTED_IPS is not set."""
+    with patch.dict('os.environ', {}, clear=True):
+        payload = {
+            "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
+            "monitor": {"name": "Test Monitor"},
+            "msg": "Test"
+        }
+        response = client.post('/webhook', json=payload)
+        # Should proceed (and fail on mock logic or succeed if mock setup correctly, 
+        # but definitely NOT 403)
+        assert response.status_code != 403
+
+@patch('app.cw_client')
+def test_webhook_ip_allowed_wildcard(mock_cw, client):
+    """Test that requests are allowed when TRUSTED_IPS includes 0.0.0.0/0."""
+    with patch.dict('os.environ', {'TRUSTED_IPS': '0.0.0.0/0'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '1.2.3.4'})
+        assert response.status_code != 403
+
+@patch('app.cw_client')
+def test_webhook_ip_allowed_specific(mock_cw, client):
+    """Test that requests are allowed from a trusted IP."""
+    with patch.dict('os.environ', {'TRUSTED_IPS': '192.168.1.100, 10.0.0.0/24'}):
+        # Setup minimal mock to pass the logic inside if access granted
+        mock_cw.find_open_ticket.return_value = None
+        
+        payload = {"heartbeat": {"status": 2}, "monitor": {}, "msg": ""} # Status 2 = Ignored
+        
+        # Test exact match
+        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '192.168.1.100'})
+        assert response.status_code == 200
+        
+        # Test CIDR match
+        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '10.0.0.5'})
+        assert response.status_code == 200
+
+@patch('app.cw_client')
+def test_webhook_ip_denied(mock_cw, client):
+    """Test that requests are denied from an untrusted IP."""
+    with patch.dict('os.environ', {'TRUSTED_IPS': '192.168.1.100'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '192.168.1.101'})
+        assert response.status_code == 403
+        assert response.json['message'] == "Forbidden"
 
 @patch('app.cw_client')
 def test_webhook_down_create_ticket(mock_cw, client):
@@ -73,7 +121,7 @@ def test_webhook_up_close_ticket(mock_cw, client):
     
     assert response.status_code == 200
     assert response.json['status'] == "closed"
-    mock_cw.close_ticket.assert_called_once_with(12345, pytest.any_str)
+    mock_cw.close_ticket.assert_called_once_with(12345, ANY)
 
 @patch('app.cw_client')
 def test_webhook_up_no_ticket(mock_cw, client):
