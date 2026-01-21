@@ -24,7 +24,7 @@ The application is configured via environment variables.
 | `CW_COMPANY` | Your ConnectWise Company ID | Yes | - |
 | `CW_PUBLIC_KEY` | API Public Key | Yes | - |
 | `CW_PRIVATE_KEY` | API Private Key | Yes | - |
-| `CW_CLIENT_ID` | Client ID (Optional) | No | - |
+| `CW_CLIENT_ID` | Client ID | Yes | - |
 | `CW_SERVICE_BOARD` | Service Board Name | No | `Service Board` |
 | `CW_STATUS_NEW` | Status for new tickets | No | `New` |
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |

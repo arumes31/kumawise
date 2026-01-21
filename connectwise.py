@@ -24,8 +24,8 @@ class ConnectWiseClient:
         self.status_new: str = os.getenv('CW_STATUS_NEW', 'New')
         self.status_closed: str = os.getenv('CW_STATUS_CLOSED', 'Closed')
         
-        if not all([self.base_url, self.company, self.public_key, self.private_key]):
-            logger.warning("ConnectWise credentials are missing. API calls will fail.")
+        if not all([self.base_url, self.company, self.public_key, self.private_key, self.client_id]):
+            logger.warning("ConnectWise credentials (including CW_CLIENT_ID) are missing. API calls will fail.")
 
         self.headers: Dict[str, str] = self._get_headers()
 
