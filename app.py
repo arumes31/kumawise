@@ -8,11 +8,12 @@ from typing import Any, Dict, Optional, Tuple, cast
 
 import redis
 from celery import Celery, Task
-from connectwise import ConnectWiseClient
 from dotenv import load_dotenv
 from flask import Flask, Response, g, jsonify, request
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from werkzeug.middleware.proxy_fix import ProxyFix
+
+from connectwise import ConnectWiseClient
 
 # Load .env file if it exists
 load_dotenv()
@@ -22,6 +23,7 @@ app = Flask(__name__)
 # Configure ProxyFix if behind a reverse proxy
 if os.environ.get('USE_PROXY') == 'true':
     num_proxies = int(os.environ.get('PROXY_FIX_COUNT', 1))
+    # Cast to Any to satisfy mypy's [method-assign]
     app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
         app.wsgi_app, x_for=num_proxies, x_proto=num_proxies, x_host=num_proxies, x_port=num_proxies
     )
@@ -97,9 +99,10 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str) -> None:
     try:
         if status == 0: # DOWN
             # 1. Check Redis Cache first
-            cached_ticket_id = redis_client.get(cache_key)
-            if cached_ticket_id:
-                logger.info(f"Ticket for {monitor_name} found in cache (ID: {cached_ticket_id.decode()}).", extra=extra)
+            # Cast redis_client.get to bytes | None to satisfy mypy
+            cached_val = cast(Optional[bytes], redis_client.get(cache_key))
+            if cached_val:
+                logger.info(f"Ticket for {monitor_name} found in cache (ID: {cached_val.decode()}).", extra=extra)
                 PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
                 return
 
@@ -130,9 +133,9 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str) -> None:
             ticket_id = None
             
             # 1. Check Cache
-            cached_ticket_id = redis_client.get(cache_key)
-            if cached_ticket_id:
-                ticket_id = int(cached_ticket_id.decode())
+            cached_val = cast(Optional[bytes], redis_client.get(cache_key))
+            if cached_val:
+                ticket_id = int(cached_val.decode())
             else:
                 # 2. Check PSA
                 existing_ticket = cw_client.find_open_ticket(ticket_summary)
@@ -164,9 +167,8 @@ def process_alert_task(self: Task, data: Dict[str, Any], request_id: str) -> Non
     try:
         handle_alert_logic(data, request_id)
     except Exception as exc:
-        if not isinstance(exc, (ValueError, KeyError)):
-             raise self.retry(exc=exc)
-        raise exc
+        retry_delay = 2 ** self.request.retries * 60
+        raise self.retry(exc=exc, countdown=retry_delay) from exc
 
 def is_ip_trusted(remote_addr: str) -> bool:
     trusted_env = os.environ.get('TRUSTED_IPS')
@@ -176,7 +178,8 @@ def is_ip_trusted(remote_addr: str) -> bool:
         client_ip = ipaddress.ip_address(remote_addr)
         for rule in trusted_env.split(','):
             rule = rule.strip()
-            if not rule: continue
+            if not rule:
+                continue
             if client_ip in ipaddress.ip_network(rule, strict=False):
                 return True
     except ValueError:
@@ -234,7 +237,9 @@ def health_detailed() -> Tuple[Response, int]:
             health_status = "error"
     except Exception:
         health_status = "error"
-    cw_configured = all([cw_client.base_url, cw_client.company, cw_client.public_key, cw_client.private_key, cw_client.client_id])
+    cw_configured = all([
+        cw_client.base_url, cw_client.company, cw_client.public_key, cw_client.private_key, cw_client.client_id
+    ])
     return jsonify({
         "status": health_status,
         "timestamp": time.time(),
