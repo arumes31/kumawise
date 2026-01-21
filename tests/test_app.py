@@ -1,6 +1,9 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, ANY
+
 from app import app, handle_alert_logic
+
 
 @pytest.fixture
 def client():
@@ -143,3 +146,18 @@ def test_handle_alert_logic_no_prefix(mock_cw):
         
         # Verify that find_open_ticket was called WITHOUT prefix or leading space
         mock_cw.find_open_ticket.assert_called_once_with("Test Monitor")
+
+@patch('app.cw_client')
+def test_handle_alert_logic_up(mock_cw):
+    """Test the core logic for closing a ticket (UP alert)."""
+    mock_cw.find_open_ticket.return_value = {"id": 12345}
+    
+    data = {
+        "heartbeat": {"status": 1, "time": "2026-01-21 22:05:00"},
+        "monitor": {"name": "Test Monitor #CW-COMP-1"},
+        "msg": "Back online"
+    }
+    
+    handle_alert_logic(data, "test-req-id")
+    
+    mock_cw.close_ticket.assert_called_once_with(12345, MagicMock())

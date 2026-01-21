@@ -1,0 +1,24 @@
+[tool.ruff]
+line-length = 120
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+ignore_missing_imports = true
+exclude = ["tests/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "flask.*",
+    "celery.*",
+    "prometheus_client.*",
+    "redis.*",
+    "werkzeug.*",
+    "dotenv.*"
+]
+ignore_missing_imports = true
