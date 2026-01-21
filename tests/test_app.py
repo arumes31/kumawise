@@ -75,6 +75,24 @@ def test_webhook_auth_missing(mock_delay, client):
         response = client.post('/webhook', json=payload)
         assert response.status_code == 401
 
+@patch('app.process_alert_task.delay')
+def test_webhook_auth_multiple_secrets(mock_delay, client):
+    """Test webhook with multiple configured secrets."""
+    with patch.dict('os.environ', {'WEBHOOK_SECRET': 'secret1, secret2'}):
+        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
+        
+        # Test first secret
+        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret1'})
+        assert response.status_code == 202
+        
+        # Test second secret
+        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret2'})
+        assert response.status_code == 202
+        
+        # Test invalid secret
+        response = client.post('/webhook', json=payload, headers={'X-KumaWise-Secret': 'secret3'})
+        assert response.status_code == 401
+
 @patch('app.cw_client')
 def test_handle_alert_logic_down(mock_cw):
     """Test the core logic for creating a ticket (DOWN alert)."""
