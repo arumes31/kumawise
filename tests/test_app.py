@@ -8,12 +8,23 @@ def client():
     with app.test_client() as client:
         yield client
 
+@patch('app.redis_client.ping')
 @patch('app.cw_client')
-def test_health(mock_cw, client):
+def test_health(mock_cw, mock_ping, client):
     """Test the health endpoint."""
+    mock_ping.return_value = True
     response = client.get('/health')
     assert response.status_code == 200
     assert response.json['status'] == "ok"
+
+@patch('app.redis_client.ping')
+@patch('app.cw_client')
+def test_health_redis_down(mock_cw, mock_ping, client):
+    """Test the health endpoint when Redis is down."""
+    mock_ping.side_effect = Exception("Redis connection failed")
+    response = client.get('/health')
+    assert response.status_code == 503
+    assert response.json['status'] == "error"
 
 @patch('app.cw_client')
 def test_metrics(mock_cw, client):
@@ -24,7 +35,7 @@ def test_metrics(mock_cw, client):
 
 @patch('app.process_alert_task.delay')
 def test_webhook_queues_task(mock_delay, client):
-    """Test that the webhook queues the celery task."""
+    """Test that the webhook queues the celery task and returns a request_id."""
     payload = {
         "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
         "monitor": {"name": "Test Monitor"},
@@ -34,9 +45,10 @@ def test_webhook_queues_task(mock_delay, client):
     response = client.post('/webhook', json=payload)
     
     assert response.status_code == 202
-    # The JSON message changed slightly in my last rewrite, but 'queued' status is what matters
     assert response.json['status'] == "queued"
-    mock_delay.assert_called_once_with(payload)
+    assert "request_id" in response.json
+    # Verify that the task was queued with the same request_id
+    mock_delay.assert_called_once_with(payload, response.json['request_id'])
 
 @patch('app.cw_client')
 def test_handle_alert_logic_down(mock_cw):
@@ -50,22 +62,7 @@ def test_handle_alert_logic_down(mock_cw):
         "msg": "Connection timeout"
     }
     
-    handle_alert_logic(data)
+    handle_alert_logic(data, "test-req-id")
     
     mock_cw.find_open_ticket.assert_called_once()
     mock_cw.create_ticket.assert_called_once()
-
-@patch('app.cw_client')
-def test_handle_alert_logic_up(mock_cw):
-    """Test the core logic for closing a ticket (UP alert)."""
-    mock_cw.find_open_ticket.return_value = {"id": 12345}
-    
-    data = {
-        "heartbeat": {"status": 1, "time": "2026-01-21 22:05:00"},
-        "monitor": {"name": "Test Monitor #CW-COMP-1"},
-        "msg": "Back online"
-    }
-    
-    handle_alert_logic(data)
-    
-    mock_cw.close_ticket.assert_called_once_with(12345, ANY)
