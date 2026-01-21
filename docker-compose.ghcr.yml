@@ -17,7 +17,8 @@ services:
       - CW_STATUS_NEW=New
       - CW_STATUS_CLOSED=Closed
       - CW_DEFAULT_COMPANY_ID=ConnectWise_Company_ID_For_Tickets
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      - REDIS_PASSWORD=your_secure_redis_password
+      - CELERY_BROKER_URL=redis://:your_secure_redis_password@redis:6379/0
       # - CW_TICKET_PREFIX=Uptime Kuma Alert:
       # - PSA_RATE_LIMIT=60/m
       # - WEBHOOK_SECRET=token1,token2
@@ -40,6 +41,9 @@ services:
     image: redis:alpine
     container_name: kumawise-redis
     restart: unless-stopped
+    command: redis-server --requirepass your_secure_redis_password
+    environment:
+      - REDIS_PASSWORD=your_secure_redis_password
     volumes:
       - redis_data:/data
 
