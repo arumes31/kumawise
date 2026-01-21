@@ -61,7 +61,7 @@ cw_client = ConnectWiseClient()
 
 # Cache Key Prefix
 CACHE_PREFIX = "ticket_state:"
-CACHE_TTL = 60 * 60 * 24 * 7  # 7 days
+CACHE_TTL = 3600  # 1 hour
 
 @app.before_request
 def set_request_id() -> None:
