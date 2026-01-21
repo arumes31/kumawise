@@ -63,7 +63,7 @@ class ConnectWiseClient:
                 "pageSize": 1
             }
             
-            response = requests.get(f"{self.base_url}/service/tickets", headers=self.headers, params=params)
+            response = requests.get(f"{self.base_url}/service/tickets", headers=self.headers, params=params, timeout=30)
             response.raise_for_status()
             
             data = response.json()
@@ -105,7 +105,7 @@ class ConnectWiseClient:
             if target_company_id:
                 payload["company"] = {"identifier": target_company_id}
 
-            response = requests.post(f"{self.base_url}/service/tickets", headers=self.headers, json=payload)
+            response = requests.post(f"{self.base_url}/service/tickets", headers=self.headers, json=payload, timeout=30)
             response.raise_for_status()
             
             ticket = response.json()
@@ -139,7 +139,7 @@ class ConnectWiseClient:
                 }
             ]
             
-            response = requests.patch(f"{self.base_url}/service/tickets/{ticket_id}", headers=self.headers, json=patch_payload)
+            response = requests.patch(f"{self.base_url}/service/tickets/{ticket_id}", headers=self.headers, json=patch_payload, timeout=30)
             response.raise_for_status()
             
             # 2. Add resolution note
@@ -149,7 +149,7 @@ class ConnectWiseClient:
                 "internalAnalysisFlag": False,
                 "resolutionFlag": True
             }
-            requests.post(f"{self.base_url}/service/tickets/{ticket_id}/notes", headers=self.headers, json=note_payload)
+            requests.post(f"{self.base_url}/service/tickets/{ticket_id}/notes", headers=self.headers, json=note_payload, timeout=30)
 
             logger.info(f"Closed ticket #{ticket_id}")
             return True
