@@ -1,7 +1,8 @@
-from unittest.mock import MagicMock, patch, ANY
+from unittest.mock import ANY, patch
 
 import pytest
 from app import app, handle_alert_logic
+
 
 @pytest.fixture
 def client():
