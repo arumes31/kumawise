@@ -23,4 +23,5 @@ COPY --chown=appuser:appuser . .
 EXPOSE 5000
 
 # Run app.py when the container launches using Gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app"]
+# Using 2 workers and 4 threads allows handling multiple concurrent webhooks
+CMD ["gunicorn", "--workers", "2", "--threads", "4", "--bind", "0.0.0.0:5000", "app:app"]

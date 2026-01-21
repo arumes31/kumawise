@@ -4,6 +4,8 @@ import os
 import re
 import ipaddress
 import time
+import queue
+import threading
 from typing import Tuple, Dict, Any, Optional
 from connectwise import ConnectWiseClient
 
@@ -14,6 +16,73 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 cw_client = ConnectWiseClient()
+task_queue = queue.Queue()
+
+def process_alert(data: Dict[str, Any]):
+    """
+    Background task to process the alert and interact with ConnectWise.
+    """
+    try:
+        heartbeat = data.get('heartbeat', {})
+        monitor = data.get('monitor', {})
+        
+        status = heartbeat.get('status') # 0 = Down, 1 = Up
+        monitor_name = monitor.get('name', 'Unknown Monitor')
+        msg = data.get('msg', 'No message')
+        
+        # Unique identifier for the ticket summary to find it later
+        # Format: "Uptime Kuma Alert: [Monitor Name]"
+        ticket_summary_prefix = "Uptime Kuma Alert:"
+        ticket_summary = f"{ticket_summary_prefix} {monitor_name}"
+
+        if status == 0: # DOWN
+            logger.info(f"Processing DOWN alert for {monitor_name}")
+            
+            # Check if ticket already exists
+            existing_ticket = cw_client.find_open_ticket(ticket_summary)
+            
+            if existing_ticket:
+                logger.info(f"Ticket already exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping creation.")
+                return
+            
+            # Extract Company ID from Monitor Name
+            # Format expectation: "... #CW123 ..." -> company_id = 123
+            company_id_match = re.search(r'#CW(\w+)', monitor_name)
+            company_id = company_id_match.group(1) if company_id_match else None
+
+            # Create new ticket
+            description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}"
+            cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
+
+        elif status == 1: # UP
+            logger.info(f"Processing UP alert for {monitor_name}")
+            
+            # Find existing ticket to close
+            existing_ticket = cw_client.find_open_ticket(ticket_summary)
+            
+            if existing_ticket:
+                resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}"
+                cw_client.close_ticket(existing_ticket['id'], resolution)
+            else:
+                logger.info(f"No open ticket found for {monitor_name} to close.")
+                
+    except Exception as e:
+        logger.error(f"Error processing alert in background worker: {e}", exc_info=True)
+
+def worker():
+    """
+    Worker thread that processes tasks from the queue.
+    """
+    while True:
+        try:
+            item = task_queue.get()
+            process_alert(item)
+            task_queue.task_done()
+        except Exception as e:
+            logger.error(f"Unexpected error in worker thread: {e}", exc_info=True)
+
+# Start the background worker thread
+threading.Thread(target=worker, daemon=True).start()
 
 def is_ip_trusted(remote_addr: str) -> bool:
     """
@@ -54,6 +123,7 @@ def webhook() -> Tuple[Response, int]:
     """
     Webhook endpoint to receive alerts from Uptime Kuma.
     Expects a JSON payload with 'heartbeat', 'monitor', and 'msg'.
+    Queues the request for background processing.
     """
     # IP Filtering
     if request.remote_addr and not is_ip_trusted(request.remote_addr):
@@ -65,61 +135,10 @@ def webhook() -> Tuple[Response, int]:
     if not data:
         return jsonify({"status": "error", "message": "No JSON payload received"}), 400
 
-    heartbeat: Dict[str, Any] = data.get('heartbeat', {})
-    monitor: Dict[str, Any] = data.get('monitor', {})
+    # Queue the processing
+    task_queue.put(data)
     
-    status: Optional[int] = heartbeat.get('status') # 0 = Down, 1 = Up
-    monitor_name: str = monitor.get('name', 'Unknown Monitor')
-    msg: str = data.get('msg', 'No message')
-    
-    # Unique identifier for the ticket summary to find it later
-    # Format: "Uptime Kuma Alert: [Monitor Name]"
-    ticket_summary_prefix = "Uptime Kuma Alert:"
-    ticket_summary = f"{ticket_summary_prefix} {monitor_name}"
-
-    if status == 0: # DOWN
-        logger.info(f"Received DOWN alert for {monitor_name}")
-        
-        # Check if ticket already exists
-        existing_ticket = cw_client.find_open_ticket(ticket_summary)
-        
-        if existing_ticket:
-            logger.info(f"Ticket already exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping creation.")
-            return jsonify({"status": "skipped", "message": "Ticket already exists"}), 200
-        
-        # Extract Company ID from Monitor Name
-        # Format expectation: "... #CW123 ..." -> company_id = 123
-        company_id_match = re.search(r'#CW(\w+)', monitor_name)
-        company_id = company_id_match.group(1) if company_id_match else None
-
-        # Create new ticket
-        description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}"
-        new_ticket = cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
-        
-        if new_ticket:
-            return jsonify({"status": "created", "ticket_id": new_ticket['id']}), 201
-        else:
-            return jsonify({"status": "error", "message": "Failed to create ticket"}), 500
-
-    elif status == 1: # UP
-        logger.info(f"Received UP alert for {monitor_name}")
-        
-        # Find existing ticket to close
-        existing_ticket = cw_client.find_open_ticket(ticket_summary)
-        
-        if existing_ticket:
-            resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}"
-            success = cw_client.close_ticket(existing_ticket['id'], resolution)
-            
-            if success:
-                return jsonify({"status": "closed", "ticket_id": existing_ticket['id']}), 200
-            else:
-                return jsonify({"status": "error", "message": "Failed to close ticket"}), 500
-        else:
-            logger.info(f"No open ticket found for {monitor_name} to close.")
-            return jsonify({"status": "skipped", "message": "No open ticket found"}), 200
-
-    return jsonify({"status": "ignored", "message": "Status not relevant"}), 200
+    return jsonify({"status": "queued", "message": "Alert received and queued for processing"}), 202
 
 @app.route('/health', methods=['GET'])
 def health() -> Tuple[Response, int]:
@@ -127,7 +146,8 @@ def health() -> Tuple[Response, int]:
     return jsonify({
         "status": "ok",
         "message": "KumaWise Proxy is running",
-        "timestamp": time.time()
+        "timestamp": time.time(),
+        "queue_size": task_queue.qsize()
     }), 200
 
 @app.route('/health/detailed', methods=['GET'])

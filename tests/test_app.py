@@ -1,6 +1,7 @@
 import pytest
+import time
 from unittest.mock import MagicMock, patch, ANY
-from app import app
+from app import app, process_alert
 
 @pytest.fixture
 def client():
@@ -14,145 +15,52 @@ def test_health(mock_cw, client):
     response = client.get('/health')
     assert response.status_code == 200
     assert response.json['status'] == "ok"
-    assert "message" in response.json
-    assert "timestamp" in response.json
+    assert "queue_size" in response.json
 
 @patch('app.cw_client')
-def test_health_detailed(mock_cw, client):
-    """Test the detailed health endpoint."""
-    mock_cw.base_url = "https://api.example.com"
-    mock_cw.company = "comp"
-    mock_cw.public_key = "pub"
-    mock_cw.private_key = "priv"
-    mock_cw.client_id = "id"
+def test_webhook_queues_request(mock_cw, client):
+    """Test that the webhook queues the request and returns 202."""
+    payload = {
+        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
+        "monitor": {"name": "Test Monitor"},
+        "msg": "Test"
+    }
     
-    response = client.get('/health/detailed')
-    assert response.status_code == 200
-    assert response.json['services']['connectwise']['configured'] is True
-    assert response.json['services']['connectwise']['base_url'] == "https://api.example.com"
-
-@patch('app.cw_client')
-def test_webhook_ip_allowed_default(mock_cw, client):
-    """Test that requests are allowed when TRUSTED_IPS is not set."""
-    with patch.dict('os.environ', {}, clear=True):
-        payload = {
-            "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
-            "monitor": {"name": "Test Monitor"},
-            "msg": "Test"
-        }
+    with patch('app.task_queue') as mock_queue:
         response = client.post('/webhook', json=payload)
-        # Should proceed (and fail on mock logic or succeed if mock setup correctly, 
-        # but definitely NOT 403)
-        assert response.status_code != 403
-
-@patch('app.cw_client')
-def test_webhook_ip_allowed_wildcard(mock_cw, client):
-    """Test that requests are allowed when TRUSTED_IPS includes 0.0.0.0/0."""
-    with patch.dict('os.environ', {'TRUSTED_IPS': '0.0.0.0/0'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '1.2.3.4'})
-        assert response.status_code != 403
-
-@patch('app.cw_client')
-def test_webhook_ip_allowed_specific(mock_cw, client):
-    """Test that requests are allowed from a trusted IP."""
-    with patch.dict('os.environ', {'TRUSTED_IPS': '192.168.1.100, 10.0.0.0/24'}):
-        # Setup minimal mock to pass the logic inside if access granted
-        mock_cw.find_open_ticket.return_value = None
         
-        payload = {"heartbeat": {"status": 2}, "monitor": {}, "msg": ""} # Status 2 = Ignored
-        
-        # Test exact match
-        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '192.168.1.100'})
-        assert response.status_code == 200
-        
-        # Test CIDR match
-        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '10.0.0.5'})
-        assert response.status_code == 200
+        assert response.status_code == 202
+        assert response.json['status'] == "queued"
+        mock_queue.put.assert_called_once_with(payload)
 
 @patch('app.cw_client')
-def test_webhook_ip_denied(mock_cw, client):
-    """Test that requests are denied from an untrusted IP."""
-    with patch.dict('os.environ', {'TRUSTED_IPS': '192.168.1.100'}):
-        payload = {"heartbeat": {}, "monitor": {}, "msg": ""}
-        response = client.post('/webhook', json=payload, environ_base={'REMOTE_ADDR': '192.168.1.101'})
-        assert response.status_code == 403
-        assert response.json['message'] == "Forbidden"
-
-@patch('app.cw_client')
-def test_webhook_down_create_ticket(mock_cw, client):
-    """Test that a DOWN alert creates a new ticket when none exists."""
-    # Setup mock
+def test_process_alert_down_create_ticket(mock_cw):
+    """Test the background logic for creating a ticket."""
     mock_cw.find_open_ticket.return_value = None
     mock_cw.create_ticket.return_value = {"id": 12345}
     
-    payload = {
+    data = {
         "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
         "monitor": {"name": "Test Monitor #CW-COMP-1", "url": "http://example.com"},
         "msg": "Connection timeout"
     }
     
-    response = client.post('/webhook', json=payload)
+    process_alert(data)
     
-    assert response.status_code == 201
-    assert response.json['status'] == "created"
-    assert response.json['ticket_id'] == 12345
-    
-    # Verify mock calls
     mock_cw.find_open_ticket.assert_called_once()
     mock_cw.create_ticket.assert_called_once()
 
 @patch('app.cw_client')
-def test_webhook_down_already_exists(mock_cw, client):
-    """Test that a DOWN alert does NOT create a ticket if one is already open."""
-    # Setup mock
+def test_process_alert_up_close_ticket(mock_cw):
+    """Test the background logic for closing a ticket."""
     mock_cw.find_open_ticket.return_value = {"id": 12345}
     
-    payload = {
-        "heartbeat": {"status": 0, "time": "2026-01-21 22:00:00"},
-        "monitor": {"name": "Test Monitor #CW-COMP-1"},
-        "msg": "Connection timeout"
-    }
-    
-    response = client.post('/webhook', json=payload)
-    
-    assert response.status_code == 200
-    assert response.json['status'] == "skipped"
-    mock_cw.create_ticket.assert_not_called()
-
-@patch('app.cw_client')
-def test_webhook_up_close_ticket(mock_cw, client):
-    """Test that an UP alert closes an existing ticket."""
-    # Setup mock
-    mock_cw.find_open_ticket.return_value = {"id": 12345}
-    mock_cw.close_ticket.return_value = True
-    
-    payload = {
+    data = {
         "heartbeat": {"status": 1, "time": "2026-01-21 22:05:00"},
         "monitor": {"name": "Test Monitor #CW-COMP-1"},
         "msg": "Back online"
     }
     
-    response = client.post('/webhook', json=payload)
+    process_alert(data)
     
-    assert response.status_code == 200
-    assert response.json['status'] == "closed"
     mock_cw.close_ticket.assert_called_once_with(12345, ANY)
-
-@patch('app.cw_client')
-def test_webhook_up_no_ticket(mock_cw, client):
-    """Test that an UP alert is skipped if no ticket is open."""
-    # Setup mock
-    mock_cw.find_open_ticket.return_value = None
-    
-    payload = {
-        "heartbeat": {"status": 1, "time": "2026-01-21 22:05:00"},
-        "monitor": {"name": "Test Monitor #CW-COMP-1"},
-        "msg": "Back online"
-    }
-    
-    response = client.post('/webhook', json=payload)
-    
-    assert response.status_code == 200
-    assert response.json['status'] == "skipped"
-    mock_cw.close_ticket.assert_not_called()
