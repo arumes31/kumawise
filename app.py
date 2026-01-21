@@ -1,17 +1,19 @@
-import re
 import ipaddress
-import time
-import os
 import logging
+import os
+import re
+import time
 import uuid
-from typing import Tuple, Dict, Any, Optional
-from flask import Flask, request, jsonify, Response, g
-from connectwise import ConnectWiseClient
-from celery import Celery
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from typing import Any, Dict, Optional, Tuple, cast
+
 import redis
-from werkzeug.middleware.proxy_fix import ProxyFix
+from celery import Celery, Task
 from dotenv import load_dotenv
+from flask import Flask, Response, g, jsonify, request
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+from connectwise import ConnectWiseClient
 
 # Load .env file if it exists
 load_dotenv()
@@ -21,7 +23,10 @@ app = Flask(__name__)
 # Configure ProxyFix if behind a reverse proxy
 if os.environ.get('USE_PROXY') == 'true':
     num_proxies = int(os.environ.get('PROXY_FIX_COUNT', 1))
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=num_proxies, x_proto=num_proxies, x_host=num_proxies, x_port=num_proxies)
+    # Cast to Any to satisfy mypy's [method-assign]
+    app.wsgi_app = ProxyFix(  # type: ignore[method-assign]
+        app.wsgi_app, x_for=num_proxies, x_proto=num_proxies, x_host=num_proxies, x_port=num_proxies
+    )
 
 # Celery Configuration
 celery_broker = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
@@ -30,7 +35,7 @@ redis_client = redis.Redis.from_url(celery_broker)
 
 # Configure logging with Correlation ID (request_id)
 class CorrelationFilter(logging.Filter):
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = getattr(g, 'request_id', 'SYS')
         return True
 
@@ -49,12 +54,12 @@ PSA_TASK_DURATION = Histogram('kumawise_psa_task_duration_seconds', 'Duration of
 cw_client = ConnectWiseClient()
 
 @app.before_request
-def set_request_id():
+def set_request_id() -> None:
     """Extract or generate a correlation ID for the request."""
     req_id = request.headers.get('X-Request-ID') or str(uuid.uuid4())
     g.request_id = req_id
 
-def get_remote_addr() -> str:
+def get_remote_addr() -> Optional[str]:
     """
     Returns the effective remote address.
     Supports Cloudflare header CF-Connecting-IP if USE_CLOUDFLARE is true.
@@ -65,7 +70,7 @@ def get_remote_addr() -> str:
             return cf_ip
     return request.remote_addr
 
-def handle_alert_logic(data: Dict[str, Any], request_id: str):
+def handle_alert_logic(data: Dict[str, Any], request_id: str) -> None:
     """
     Core logic for processing an alert. Accepts request_id for logging traceability.
     """
@@ -83,58 +88,56 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
     prefix = os.environ.get('CW_TICKET_PREFIX', 'Uptime Kuma Alert:')
     ticket_summary = f"{prefix} {monitor_name}" if prefix else monitor_name
 
-    try:
-        if status == 0: # DOWN
-            logger.info(f"Processing DOWN alert for {monitor_name}", extra=extra)
-            existing_ticket = cw_client.find_open_ticket(ticket_summary)
-            if existing_ticket:
-                logger.info(f"Ticket already exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping.", extra=extra)
-                PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
-                return
-            
-            # Extract Company ID from Monitor Name
-            # Format expectation: "... #CW123 ..." -> company_id = 123
-            company_id_match = re.search(r'#CW(\w+)', monitor_name)
-            company_id = company_id_match.group(1) if company_id_match else None
+    if status == 0: # DOWN
+        logger.info(f"Processing DOWN alert for {monitor_name}", extra=extra)
+        existing_ticket = cw_client.find_open_ticket(ticket_summary)
+        if existing_ticket:
+            logger.info(f"Ticket exists for {monitor_name} (ID: {existing_ticket['id']}). Skipping.", extra=extra)
+            PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
+            return
+        
+        company_id_match = re.search(r'#CW(\w+)', monitor_name)
+        company_id = company_id_match.group(1) if company_id_match else None
 
-            # Create new ticket
-            description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
-            cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
-            PSA_TASK_COUNT.labels(type='create', result='success').inc()
+        description = (
+            f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\n"
+            f"Error: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
+        )
+        cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
+        PSA_TASK_COUNT.labels(type='create', result='success').inc()
 
-        elif status == 1: # UP
-            logger.info(f"Processing UP alert for {monitor_name}", extra=extra)
-            # Find existing ticket to close
-            existing_ticket = cw_client.find_open_ticket(ticket_summary)
-            if existing_ticket:
-                resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
-                cw_client.close_ticket(existing_ticket['id'], resolution)
-                PSA_TASK_COUNT.labels(type='close', result='success').inc()
-            else:
-                logger.info(f"No open ticket found for {monitor_name} to close.", extra=extra)
-                PSA_TASK_COUNT.labels(type='close', result='skipped').inc()
+    elif status == 1: # UP
+        logger.info(f"Processing UP alert for {monitor_name}", extra=extra)
+        existing_ticket = cw_client.find_open_ticket(ticket_summary)
+        if existing_ticket:
+            resolution = (
+                f"Monitor {monitor_name} is back UP.\nMessage: {msg}\n"
+                f"Time: {heartbeat.get('time')}\nID: {request_id}"
+            )
+            cw_client.close_ticket(existing_ticket['id'], resolution)
+            PSA_TASK_COUNT.labels(type='close', result='success').inc()
+        else:
+            logger.info(f"No open ticket found for {monitor_name} to close.", extra=extra)
+            PSA_TASK_COUNT.labels(type='close', result='skipped').inc()
 
-        PSA_TASK_DURATION.labels(type=alert_type).observe(time.time() - start_time)
+    PSA_TASK_DURATION.labels(type=alert_type).observe(time.time() - start_time)
 
-    except Exception as exc:
-        logger.error(f"Error processing {alert_type} alert: {exc}", extra=extra)
-        PSA_TASK_COUNT.labels(type=alert_type.lower(), result='error').inc()
-        # Retry with exponential backoff
-        retry_delay = 2 ** self.request.retries * 60
-        raise self.retry(exc=exc, countdown=retry_delay)
-
-@celery.task(bind=True, max_retries=5, default_retry_delay=60, rate_limit=os.environ.get('PSA_RATE_LIMIT', '60/m'))
-def process_alert_task(self, data: Dict[str, Any], request_id: str):
+# Use type: ignore for untyped decorator
+@celery.task(bind=True, max_retries=5, default_retry_delay=60, rate_limit=os.environ.get('PSA_RATE_LIMIT', '60/m')) # type: ignore
+def process_alert_task(self: Task, data: Dict[str, Any], request_id: str) -> None:
     """
-    Celery task wrapper with retry logic and rate limiting.
+    Celery task wrapper with retry logic.
     """
     try:
         handle_alert_logic(data, request_id)
     except Exception as exc:
-        # Re-raise for celery retry mechanism if it's not a logic error we handled
-        if not isinstance(exc, (ValueError, KeyError)): # Simple example of logic error exclusion
-             raise self.retry(exc=exc)
-        raise exc
+        alert_type = "DOWN" if data.get('heartbeat', {}).get('status') == 0 else "UP"
+        logger.error(f"Error processing {alert_type} alert: {exc}", extra={'request_id': request_id})
+        PSA_TASK_COUNT.labels(type=alert_type.lower(), result='error').inc()
+        
+        # Retry with exponential backoff
+        retry_delay = 2 ** self.request.retries * 60
+        raise self.retry(exc=exc, countdown=retry_delay) from exc
 
 def is_ip_trusted(remote_addr: str) -> bool:
     trusted_env = os.environ.get('TRUSTED_IPS')
@@ -144,7 +147,8 @@ def is_ip_trusted(remote_addr: str) -> bool:
         client_ip = ipaddress.ip_address(remote_addr)
         for rule in trusted_env.split(','):
             rule = rule.strip()
-            if not rule: continue
+            if not rule:
+                continue
             if client_ip in ipaddress.ip_network(rule, strict=False):
                 return True
     except ValueError:
@@ -202,7 +206,7 @@ def health_detailed() -> Tuple[Response, int]:
     redis_ok = False
     celery_workers = []
     try:
-        redis_ok = redis_client.ping()
+        redis_ok = cast(bool, redis_client.ping())
     except Exception:
         health_status = "error"
     try:
@@ -215,7 +219,9 @@ def health_detailed() -> Tuple[Response, int]:
     except Exception:
         health_status = "error"
 
-    cw_configured = all([cw_client.base_url, cw_client.company, cw_client.public_key, cw_client.private_key, cw_client.client_id])
+    cw_configured = all([
+        cw_client.base_url, cw_client.company, cw_client.public_key, cw_client.private_key, cw_client.client_id
+    ])
     
     return jsonify({
         "status": health_status,

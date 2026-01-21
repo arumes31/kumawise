@@ -6,3 +6,5 @@ celery
 redis
 prometheus_client
 python-dotenv
+ruff
+mypy

@@ -1,8 +1,9 @@
-import os
-import requests
 import base64
 import logging
-from typing import Optional, Dict, Any, Union
+import os
+from typing import Any, Dict, Optional, cast
+
+import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -48,27 +49,25 @@ class ConnectWiseClient:
     def find_open_ticket(self, summary_contains: str) -> Optional[Dict[str, Any]]:
         """
         Finds an open ticket with a summary containing the specified text.
-        
-        Args:
-            summary_contains: The text to search for in the ticket summary.
-            
-        Returns:
-            The ticket dictionary if found, otherwise None.
         """
         try:
-            # Filter for tickets that are NOT closed and contain the summary text
             conditions = f"closedFlag=false AND summary contains '{summary_contains}'"
-            params = {
+            params: Dict[str, Any] = {
                 "conditions": conditions,
                 "pageSize": 1
             }
             
-            response = requests.get(f"{self.base_url}/service/tickets", headers=self.headers, params=params, timeout=30)
+            response = requests.get(
+                f"{self.base_url}/service/tickets", 
+                headers=self.headers, 
+                params=params, 
+                timeout=30
+            )
             response.raise_for_status()
             
             data = response.json()
             if isinstance(data, list) and len(data) > 0:
-                return data[0]
+                return cast(Dict[str, Any], data[0])
             return None
             
         except requests.exceptions.RequestException as e:
@@ -77,18 +76,10 @@ class ConnectWiseClient:
                 logger.error(f"Response: {e.response.text}")
             return None
 
-    def create_ticket(self, summary: str, description: str, monitor_name: str, company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def create_ticket(self, summary: str, description: str, monitor_name: str, 
+                      company_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """
         Creates a new service ticket.
-        
-        Args:
-            summary: Ticket summary/title.
-            description: Ticket description/notes.
-            monitor_name: Name of the monitor (for logging).
-            company_id: Optional specific ConnectWise Company ID/Identifier.
-            
-        Returns:
-            The created ticket dictionary or None if failed.
         """
         try:
             payload = {
@@ -99,18 +90,21 @@ class ConnectWiseClient:
                 "initialDescription": description,
             }
             
-            # Priority: passed company_id > env var > none
             target_company_id = company_id or os.getenv('CW_DEFAULT_COMPANY_ID')
-            
             if target_company_id:
                 payload["company"] = {"identifier": target_company_id}
 
-            response = requests.post(f"{self.base_url}/service/tickets", headers=self.headers, json=payload, timeout=30)
+            response = requests.post(
+                f"{self.base_url}/service/tickets", 
+                headers=self.headers, 
+                json=payload, 
+                timeout=30
+            )
             response.raise_for_status()
             
             ticket = response.json()
             logger.info(f"Created ticket #{ticket.get('id')} for {monitor_name}")
-            return ticket
+            return cast(Dict[str, Any], ticket)
             
         except requests.exceptions.RequestException as e:
             logger.error(f"Error creating ticket: {e}")
@@ -121,16 +115,8 @@ class ConnectWiseClient:
     def close_ticket(self, ticket_id: int, resolution: str) -> bool:
         """
         Closes a ticket by updating its status and adding a resolution note.
-        
-        Args:
-            ticket_id: The ID of the ticket to close.
-            resolution: The resolution note text.
-            
-        Returns:
-            True if successful, False otherwise.
         """
         try:
-            # 1. Update status to closed
             patch_payload = [
                 {
                     "op": "replace",
@@ -139,17 +125,26 @@ class ConnectWiseClient:
                 }
             ]
             
-            response = requests.patch(f"{self.base_url}/service/tickets/{ticket_id}", headers=self.headers, json=patch_payload, timeout=30)
+            response = requests.patch(
+                f"{self.base_url}/service/tickets/{ticket_id}", 
+                headers=self.headers, 
+                json=patch_payload, 
+                timeout=30
+            )
             response.raise_for_status()
             
-            # 2. Add resolution note
             note_payload = {
                 "text": resolution,
                 "detailDescriptionFlag": True,
                 "internalAnalysisFlag": False,
                 "resolutionFlag": True
             }
-            requests.post(f"{self.base_url}/service/tickets/{ticket_id}/notes", headers=self.headers, json=note_payload, timeout=30)
+            requests.post(
+                f"{self.base_url}/service/tickets/{ticket_id}/notes", 
+                headers=self.headers, 
+                json=note_payload, 
+                timeout=30
+            )
 
             logger.info(f"Closed ticket #{ticket_id}")
             return True
@@ -159,3 +154,4 @@ class ConnectWiseClient:
             if e.response:
                 logger.error(f"Response: {e.response.text}")
             return False
+            
