@@ -1,6 +1,7 @@
 from unittest.mock import ANY, patch
 
 import pytest
+
 from app import app, handle_alert_logic
 
 
