@@ -78,8 +78,10 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
     msg = data.get('msg', 'No message')
     
     alert_type = "DOWN" if status == 0 else "UP"
-    ticket_summary_prefix = os.environ.get('CW_TICKET_PREFIX', 'Uptime Kuma Alert:')
-    ticket_summary = f"{ticket_summary_prefix} {monitor_name}"
+
+    # Unique identifier for the ticket summary
+    prefix = os.environ.get('CW_TICKET_PREFIX', 'Uptime Kuma Alert:')
+    ticket_summary = f"{prefix} {monitor_name}" if prefix else monitor_name
 
     try:
         if status == 0: # DOWN
@@ -90,14 +92,19 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
                 PSA_TASK_COUNT.labels(type='create', result='skipped').inc()
                 return
             
+            # Extract Company ID from Monitor Name
+            # Format expectation: "... #CW123 ..." -> company_id = 123
             company_id_match = re.search(r'#CW(\w+)', monitor_name)
             company_id = company_id_match.group(1) if company_id_match else None
+
+            # Create new ticket
             description = f"Monitor: {monitor_name}\nURL: {monitor.get('url', 'N/A')}\nError: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
             cw_client.create_ticket(ticket_summary, description, monitor_name, company_id=company_id)
             PSA_TASK_COUNT.labels(type='create', result='success').inc()
 
         elif status == 1: # UP
             logger.info(f"Processing UP alert for {monitor_name}", extra=extra)
+            # Find existing ticket to close
             existing_ticket = cw_client.find_open_ticket(ticket_summary)
             if existing_ticket:
                 resolution = f"Monitor {monitor_name} is back UP.\nMessage: {msg}\nTime: {heartbeat.get('time')}\nRequest ID: {request_id}"
@@ -112,15 +119,22 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
     except Exception as exc:
         logger.error(f"Error processing {alert_type} alert: {exc}", extra=extra)
         PSA_TASK_COUNT.labels(type=alert_type.lower(), result='error').inc()
+        # Retry with exponential backoff
         retry_delay = 2 ** self.request.retries * 60
         raise self.retry(exc=exc, countdown=retry_delay)
 
 @celery.task(bind=True, max_retries=5, default_retry_delay=60)
 def process_alert_task(self, data: Dict[str, Any], request_id: str):
+    """
+    Celery task wrapper with retry logic.
+    """
     try:
         handle_alert_logic(data, request_id)
     except Exception as exc:
-        raise self.retry(exc=exc)
+        # Re-raise for celery retry mechanism if it's not a logic error we handled
+        if not isinstance(exc, (ValueError, KeyError)): # Simple example of logic error exclusion
+             raise self.retry(exc=exc)
+        raise exc
 
 def is_ip_trusted(remote_addr: str) -> bool:
     trusted_env = os.environ.get('TRUSTED_IPS')
@@ -162,6 +176,7 @@ def webhook() -> Tuple[Response, int]:
 
 @app.route('/health', methods=['GET'])
 def health() -> Tuple[Response, int]:
+    """Basic health check with Redis ping."""
     try:
         redis_client.ping()
         return jsonify({"status": "ok", "timestamp": time.time()}), 200
@@ -170,6 +185,7 @@ def health() -> Tuple[Response, int]:
 
 @app.route('/health/detailed', methods=['GET'])
 def health_detailed() -> Tuple[Response, int]:
+    """Deep health check including Redis and Celery status."""
     health_status = "ok"
     redis_ok = False
     celery_workers = []
