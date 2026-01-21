@@ -22,10 +22,13 @@ A lightweight middleware webhook receiver that bridges **Uptime Kuma** alerts to
 ## Features
 
 - **Webhook Listener:** Receives alerts from Uptime Kuma.
+- **Persistent Queuing:** Uses Redis and Celery to ensure no alerts are lost during downtime or restarts.
 - **Auto-Ticketing:** Creates a ticket in ConnectWise when a monitor goes DOWN.
 - **Auto-Resolution:** Closes the corresponding ticket when the monitor comes back UP.
-- **Smart Parsing:** Extracts Company ID from monitor names (e.g., `My Server #CW123`) to assign tickets to the correct company.
-- **Deduplication:** Prevents duplicate tickets for the same downtime event.
+- **Smart Parsing:** Extracts Company ID from monitor names (e.g., `My Server #CW123`) for correct assignment.
+- **Traceability:** Correlation IDs (Request IDs) injected into all logs and tickets for end-to-end tracking.
+- **Resilience:** Automatic retries with exponential backoff for PSA API calls.
+- **Observability:** Built-in Prometheus metrics and deep health checks.
 
 ## Configuration
 
@@ -34,15 +37,19 @@ The application is configured via environment variables.
 | Variable | Description | Required | Default |
 |----------|-------------|:--------:|---------|
 | `CW_URL` | ConnectWise API Base URL | No | `https://api-na.myconnectwise.net/v4_6_release/apis/3.0` |
-| `CW_COMPANY` | Your ConnectWise Company ID | Yes | - |
-| `CW_PUBLIC_KEY` | API Public Key | Yes | - |
-| `CW_PRIVATE_KEY` | API Private Key | Yes | - |
-| `CW_CLIENT_ID` | Client ID | Yes | - |
+| `CW_COMPANY` | Your ConnectWise Company ID | **Yes** | - |
+| `CW_PUBLIC_KEY` | API Public Key | **Yes** | - |
+| `CW_PRIVATE_KEY` | API Private Key | **Yes** | - |
+| `CW_CLIENT_ID` | API Client ID | **Yes** | - |
 | `CW_SERVICE_BOARD` | Service Board Name | No | `Service Board` |
 | `CW_STATUS_NEW` | Status for new tickets | No | `New` |
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
 | `CW_DEFAULT_COMPANY_ID` | Fallback CW Company ID | No | - |
+| `CELERY_BROKER_URL` | Redis connection string | No | `redis://redis:6379/0` |
 | `TRUSTED_IPS` | Whitelist IPs/CIDRs (comma-sep) | No | `0.0.0.0/0` (All) |
+| `USE_PROXY` | Enable Reverse Proxy support (X-Forwarded-For) | No | `false` |
+| `PROXY_FIX_COUNT` | Number of upstream proxies | No | `1` |
+| `USE_CLOUDFLARE` | Enable Cloudflare (CF-Connecting-IP) support | No | `false` |
 | `PORT` | Webhook Port | No | `5000` |
 
 ## Deployment
@@ -56,9 +63,9 @@ docker pull ghcr.io/arumes31/kumawise:latest
 docker run -d -p 5000:5000 --env-file .env ghcr.io/arumes31/kumawise:latest
 ```
 
-### Docker Compose (GHCR Image)
+### Docker Compose (Recommended)
 
-Use the `docker-compose.ghcr.yml` file to run the latest pre-built image.
+The recommended way to deploy is using Docker Compose, which includes the Proxy, Worker, and Redis.
 
 ```bash
 # Download the example file
@@ -72,29 +79,11 @@ mv docker-compose.ghcr.yml docker-compose.yml
 docker-compose up -d
 ```
 
-### Docker Compose (Build Locally)
+## Monitoring
 
-1. **Configure:** Update `docker-compose.yml` with your ConnectWise credentials.
-2. **Run:**
-   ```bash
-   docker-compose up -d --build
-   ```
-
-### Manual
-
-1. **Install Dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. **Run:**
-   ```bash
-   # Linux/Mac
-   export CW_COMPANY=your_company ...
-   python app.py
-   
-   # Windows (PowerShell)
-   $env:CW_COMPANY="your_company"; python app.py
-   ```
+- **Basic Health:** `GET /health` (Verifies API and Redis connectivity)
+- **Detailed Health:** `GET /health/detailed` (Verifies Celery workers and CW config)
+- **Metrics:** `GET /metrics` (Prometheus formatted metrics)
 
 ## Uptime Kuma Setup
 
@@ -110,25 +99,6 @@ docker-compose up -d
 To automatically assign tickets to a specific ConnectWise company, include the Company Identifier in the Monitor Name using the `#CW` prefix.
 
 **Example Monitor Name:** `Web Server - Production #CWMyClient`
-*   The proxy will extract `MyClient` and use it as the `company/identifier` in the ConnectWise API call.
-
-### Example Webhook Payload (JSON)
-
-When Uptime Kuma sends an alert, it looks like this:
-
-```json
-{
-  "heartbeat": {
-    "status": 0,
-    "time": "2026-01-21 22:00:00"
-  },
-  "monitor": {
-    "name": "Web Server - Production #CWMyClient",
-    "url": "https://example.com"
-  },
-  "msg": "Connection timeout"
-}
-```
 
 ## Development
 
@@ -136,3 +106,7 @@ When Uptime Kuma sends an alert, it looks like this:
 ```bash
 pytest
 ```
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
