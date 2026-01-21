@@ -2,3 +2,6 @@ flask
 requests
 gunicorn
 pytest
+celery
+redis
+prometheus_client
