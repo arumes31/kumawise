@@ -46,6 +46,7 @@ The application is configured via environment variables.
 | `CW_STATUS_CLOSED` | Status for closed tickets | No | `Closed` |
 | `CW_DEFAULT_COMPANY_ID` | Fallback CW Company ID | No | - |
 | `CW_TICKET_PREFIX` | Prefix for ticket summary | No | `Uptime Kuma Alert:` |
+| `PSA_RATE_LIMIT` | Celery task rate limit (e.g., `10/m`, `2/s`) | No | `60/m` |
 | `WEBHOOK_SECRET` | Optional shared secret(s) for authentication. Multiple keys can be provided as a comma-separated list. If set, requests must include a valid `X-KumaWise-Secret` header. | No | - |
 | `CELERY_BROKER_URL` | Redis connection string | No | `redis://redis:6379/0` |
 | `TRUSTED_IPS` | Whitelist IPs/CIDRs (comma-sep) | No | `0.0.0.0/0` (All) |

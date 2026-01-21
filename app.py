@@ -123,10 +123,10 @@ def handle_alert_logic(data: Dict[str, Any], request_id: str):
         retry_delay = 2 ** self.request.retries * 60
         raise self.retry(exc=exc, countdown=retry_delay)
 
-@celery.task(bind=True, max_retries=5, default_retry_delay=60)
+@celery.task(bind=True, max_retries=5, default_retry_delay=60, rate_limit=os.environ.get('PSA_RATE_LIMIT', '60/m'))
 def process_alert_task(self, data: Dict[str, Any], request_id: str):
     """
-    Celery task wrapper with retry logic.
+    Celery task wrapper with retry logic and rate limiting.
     """
     try:
         handle_alert_logic(data, request_id)
