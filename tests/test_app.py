@@ -13,7 +13,23 @@ def test_health(mock_cw, client):
     """Test the health endpoint."""
     response = client.get('/health')
     assert response.status_code == 200
-    assert response.json == {"status": "ok"}
+    assert response.json['status'] == "ok"
+    assert "message" in response.json
+    assert "timestamp" in response.json
+
+@patch('app.cw_client')
+def test_health_detailed(mock_cw, client):
+    """Test the detailed health endpoint."""
+    mock_cw.base_url = "https://api.example.com"
+    mock_cw.company = "comp"
+    mock_cw.public_key = "pub"
+    mock_cw.private_key = "priv"
+    mock_cw.client_id = "id"
+    
+    response = client.get('/health/detailed')
+    assert response.status_code == 200
+    assert response.json['services']['connectwise']['configured'] is True
+    assert response.json['services']['connectwise']['base_url'] == "https://api.example.com"
 
 @patch('app.cw_client')
 def test_webhook_ip_allowed_default(mock_cw, client):

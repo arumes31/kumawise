@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import ipaddress
+import time
 from typing import Tuple, Dict, Any, Optional
 from connectwise import ConnectWiseClient
 
@@ -122,7 +123,37 @@ def webhook() -> Tuple[Response, int]:
 
 @app.route('/health', methods=['GET'])
 def health() -> Tuple[Response, int]:
-    return jsonify({"status": "ok"}), 200
+    """Basic health check."""
+    return jsonify({
+        "status": "ok",
+        "message": "KumaWise Proxy is running",
+        "timestamp": time.time()
+    }), 200
+
+@app.route('/health/detailed', methods=['GET'])
+def health_detailed() -> Tuple[Response, int]:
+    """Detailed health check including configuration status."""
+    cw_configured = all([
+        cw_client.base_url,
+        cw_client.company,
+        cw_client.public_key,
+        cw_client.private_key,
+        cw_client.client_id
+    ])
+    
+    return jsonify({
+        "status": "ok",
+        "timestamp": time.time(),
+        "services": {
+            "connectwise": {
+                "configured": cw_configured,
+                "base_url": cw_client.base_url
+            }
+        },
+        "environment": {
+            "trusted_ips_enabled": bool(os.environ.get('TRUSTED_IPS'))
+        }
+    }), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

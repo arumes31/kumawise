@@ -2,6 +2,19 @@
   <img src="docs/logo.svg" alt="KumaWise Logo" width="400">
 </p>
 
+<p align="center">
+  <a href="https://github.com/arumes31/kumawise/actions/workflows/docker-build.yml">
+    <img src="https://github.com/arumes31/kumawise/actions/workflows/docker-build.yml/badge.svg" alt="Build Status">
+  </a>
+  <a href="https://github.com/arumes31/kumawise/actions/workflows/security-scan.yml">
+    <img src="https://github.com/arumes31/kumawise/actions/workflows/security-scan.yml/badge.svg" alt="Security Scan">
+  </a>
+  <a href="https://github.com/arumes31/kumawise/blob/main/LICENSE">
+    <img src="https://img.shields.io/github/license/arumes31/kumawise" alt="License">
+  </a>
+  <img src="https://img.shields.io/badge/python-3.14-blue.svg" alt="Python 3.14">
+</p>
+
 # KumaWise Proxy
 
 A lightweight middleware webhook receiver that bridges **Uptime Kuma** alerts to **ConnectWise Manage** tickets.
