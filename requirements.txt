@@ -8,4 +8,4 @@ prometheus_client==0.24.1
 python-dotenv==1.2.1
 ruff==0.14.13
 mypy==1.19.1
-types-requests==2.32.4.20260107
+types-requests==2.33.0.20260327
